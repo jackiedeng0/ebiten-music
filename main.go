@@ -1,10 +1,16 @@
 package main
 
 import (
+	"encoding/binary"
+	"fmt"
 	"image/color"
+	"io"
 	"math"
+	"os"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
+	"github.com/hajimehoshi/ebiten/v2/audio/mp3"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 )
 
@@ -17,8 +23,8 @@ type MusicBarsSettings struct {
 }
 
 type Bar struct {
-	Freq      float64
-	HeightPct float64
+	Freq       float64
+	Proportion float64
 }
 
 func (settings *MusicBarsSettings) initBars() []Bar {
@@ -26,8 +32,7 @@ func (settings *MusicBarsSettings) initBars() []Bar {
 	for i := range settings.NumBars {
 		freq := (settings.StartFreq * math.Pow(
 			settings.EndFreq/settings.StartFreq, float64(i/settings.NumBars)))
-		// TODO: set initial HeightPct to 0
-		bars[i] = Bar{Freq: freq, HeightPct: (float64(i) * 10) / 100}
+		bars[i] = Bar{Freq: freq, Proportion: 0}
 	}
 	return bars
 }
@@ -35,10 +40,20 @@ func (settings *MusicBarsSettings) initBars() []Bar {
 var settings MusicBarsSettings
 var bars []Bar
 var barWidth float64
+var stream2 *mp3.Stream
 
 type Game struct{}
 
+func invariant(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
 func (g *Game) Update() error {
+	bytes := make([]byte, 1)
+	_, err := stream2.Read(bytes)
+	invariant(err)
 	return nil
 }
 
@@ -47,7 +62,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	for i, bar := range bars {
 		ebitenutil.DrawRect(screen,
 			float64(i)*barWidth, 240,
-			barWidth, -(bar.HeightPct * settings.MaxHeight),
+			barWidth, -(bar.Proportion * settings.MaxHeight),
 			rectColor)
 	}
 }
@@ -57,12 +72,36 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func main() {
+	if len(os.Args) < 2 {
+		panic("Takes an mp3 file as argument.")
+	}
+	file, err := os.Open(os.Args[1])
+	invariant(err)
+	stream, err := mp3.DecodeF32(file)
+	invariant(err)
+	stream2, err = mp3.DecodeF32(file)
+	invariant(err)
+
+	var L float32 = 0
+	var R float32 = 0
+	for err == nil {
+		err = binary.Read(stream2, binary.LittleEndian, &L)
+		err = binary.Read(stream2, binary.LittleEndian, &R)
+		fmt.Printf("L: %f, R: %f\n", L, R)
+	}
+	stream2.Seek(0, io.SeekStart)
+
+	context := audio.NewContext(stream.SampleRate())
+	player, err := context.NewPlayerF32(stream)
+	invariant(err)
+	player.Play()
+
 	settings = MusicBarsSettings{
-		NumBars:   10,
+		NumBars:   20,
 		MaxWidth:  320,
 		MaxHeight: 240,
 		StartFreq: 20,
-		EndFreq:   20,
+		EndFreq:   20000,
 	}
 	bars = settings.initBars()
 	barWidth = settings.MaxWidth / float64(settings.NumBars)
